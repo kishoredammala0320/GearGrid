@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==============================
+// ENUMS FOR STRICT STATE CONTROL
+// ==============================
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+enum ListingType {
+  RENT
+  SELL
+}
+
+enum ListingStatus {
+  ACTIVE       // Public Feed
+  RESERVED     // Deal Accepted, waiting for physical hand-off
+  RENTED_SOLD  // Hand-off done via OTP
+  INACTIVE     // Paused or removed by owner
+}
+
+enum TransactionStatus {
+  PENDING_HANDOFF // Waiting for Buyer to enter 4-digit OTP
+  ACTIVE_RENTAL   // Item is currently with the buyer
+  COMPLETED       // Returned safely, Escrow released
+  DISPUTED        // Damage reported, awaiting Admin arbitration
+}
+
+// ==============================
+// MODELS
+// ==============================
+
+model User {
+  id            String    @id @default(cuid())
+  clerkId       String    @unique // Bound to Microsoft SSO
+  email         String    @unique // Restricted to @pragati.ac.in
+  rollNumber    String    @unique // 10-char identity (e.g. 21CS104012)
+  role          Role      @default(STUDENT)
+  
+  // Relations
+  listings      Listing[]     @relation("OwnerListings")
+  transactions  Transaction[] @relation("BuyerTransactions")
+  messagesSent  Message[]     @relation("MessagesSent")
+  messagesRecv  Message[]     @relation("MessagesReceived")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Listing {
+  id              String        @id @default(cuid())
+  title           String
+  category        String        
+  type            ListingType   
+  pricePerDay     Float?        
+  sellPrice       Float?        
+  securityDeposit Float?        
+  microLocation   String        // e.g., "Hostel 4", "Central Library"
+  imageUrl        String?
+  status          ListingStatus @default(ACTIVE)
+  
+  // Relations
+  ownerId         String
+  owner           User          @relation("OwnerListings", fields: [ownerId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  messages        Message[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Transaction {
+  id              String            @id @default(cuid())
+  
+  // Relations
+  listingId       String
+  listing         Listing           @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  buyerId         String
+  buyer           User              @relation("BuyerTransactions", fields: [buyerId], references: [id], onDelete: Restrict)
+  
+  // Hand-off & Arbitration State
+  status          TransactionStatus @default(PENDING_HANDOFF)
+  handoffPin      String?           // 4-digit OTP
+  
+  // Financials
+  rentalFee       Float?            
+  escrowAmount    Float?            
+  escrowFee       Float             @default(15.0) // Fixed convenience fee
+  
+  // Time Tracking (For Late Penalties)
+  startTime       DateTime?         
+  expectedReturn  DateTime?         
+  actualReturn    DateTime?         
+  
+  // Damage Arbitration ("No Photos, No Payout")
+  preHandoffPhotos String[]         
+  postReturnPhotos String[]         
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  text       String
+  isRead     Boolean  @default(false)
+  
+  // Relations
+  listingId  String
+  listing    Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  senderId   String
+  sender     User     @relation("MessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String
+  receiver   User     @relation("MessagesReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+  
+  createdAt  DateTime @default(now())
+}
